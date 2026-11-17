@@ -25,8 +25,8 @@ button:hover{background:#1b3d70}
 .red{background:#a52b2b}
 #adminSection,#schoolSection,#ownerSection,#memberSection{display:none}
 #message{display:none;padding:12px;border-radius:7px;margin-bottom:15px;overflow-wrap:anywhere}
-.school-card{border:1px solid #dce2eb;border-radius:9px;padding:16px;margin:14px 0}
-.school-card h3{margin:0 0 8px;color:#10264b}
+.school-card,.teacher-card,.class-card{border:1px solid #dce2eb;border-radius:9px;padding:16px;margin:12px 0}
+.school-card h3,.class-card h3{margin:0 0 8px;color:#10264b}
 .status{font-weight:bold;text-transform:uppercase;font-size:13px}
 .pending{color:#a36b00}
 .approved{color:#168044}
@@ -34,8 +34,8 @@ button:hover{background:#1b3d70}
 .actions{display:flex;gap:8px;flex-wrap:wrap}
 .actions button{flex:1;min-width:120px}
 .small{font-size:13px;color:#68758a}
-.teacher-card{border:1px solid #dce2eb;border-radius:9px;padding:15px;margin:12px 0}
-.teacher-card p{overflow-wrap:anywhere}
+.divider{border-top:1px solid #e0e5ed;margin:25px 0}
+.teacher-card p,.class-card p{overflow-wrap:anywhere}
 footer{text-align:center;padding:20px;color:#68758a;font-size:13px}
 </style>
 </head>
@@ -91,6 +91,7 @@ footer{text-align:center;padding:20px;color:#68758a;font-size:13px}
 <h2>School Owner Dashboard</h2>
 <h3 id="ownerSchoolName"></h3>
 <p id="ownerSchoolCounty" class="small"></p>
+
 <div class="divider"></div>
 
 <h2>Teacher Management</h2>
@@ -104,6 +105,44 @@ footer{text-align:center;padding:20px;color:#68758a;font-size:13px}
 
 <button id="refreshTeachers">Refresh Teacher List</button>
 <div id="teacherList">Loading teachers...</div>
+
+<div class="divider"></div>
+
+<h2>Class Management</h2>
+<p>Create and manage classes for your school.</p>
+
+<form id="addClassForm">
+<label for="className">Class name</label>
+<input id="className" list="cbcClasses" placeholder="Example: Grade 1 or PP1" required>
+
+<datalist id="cbcClasses">
+<option value="PP1">
+<option value="PP2">
+<option value="Grade 1">
+<option value="Grade 2">
+<option value="Grade 3">
+<option value="Grade 4">
+<option value="Grade 5">
+<option value="Grade 6">
+<option value="Grade 7">
+<option value="Grade 8">
+<option value="Grade 9">
+<option value="Grade 10">
+<option value="Grade 11">
+<option value="Grade 12">
+</datalist>
+
+<label for="classStream">Stream (optional)</label>
+<input id="classStream" placeholder="Example: East, West, North">
+
+<label for="academicYear">Academic year</label>
+<input id="academicYear" type="number" min="2000" max="2100" placeholder="Example: 2026" required>
+
+<button class="gold" type="submit">Create Class</button>
+</form>
+
+<button id="refreshClasses">Refresh Class List</button>
+<div id="classList">Loading classes...</div>
 
 <button class="grey" id="ownerLogout">Logout</button>
 </div>
@@ -223,7 +262,9 @@ async function routeUser(){
         document.getElementById("ownerSchoolName").textContent=school.school_name;
         document.getElementById("ownerSchoolCounty").textContent="County: "+school.county;
         document.getElementById("ownerSection").style.display="block";
+
         await loadTeachers();
+        await loadClasses();
         return;
     }
 
@@ -522,9 +563,125 @@ async function changeTeacherStatus(memberId,active){
     await loadTeachers();
 }
 
+// Class management: load classes
+async function loadClasses(){
+    const list=document.getElementById("classList");
+
+    if(!currentSchoolId){
+        list.textContent="No school selected.";
+        return;
+    }
+
+    list.textContent="Loading classes...";
+
+    const {data,error}=await client
+        .from("school_classes")
+        .select("id,class_name,stream,academic_year,created_at")
+        .eq("school_id",currentSchoolId)
+        .order("academic_year",{ascending:false})
+        .order("class_name",{ascending:true});
+
+    if(error){
+        list.textContent="Could not load classes: "+error.message;
+        return;
+    }
+
+    if(!data || data.length===0){
+        list.textContent="No classes have been created yet.";
+        return;
+    }
+
+    list.replaceChildren();
+
+    data.forEach(schoolClass=>{
+        const card=document.createElement("div");
+        card.className="class-card";
+
+        const title=document.createElement("h3");
+        title.textContent=schoolClass.class_name;
+
+        const stream=document.createElement("p");
+        stream.textContent="Stream: "+(schoolClass.stream || "Not specified");
+
+        const year=document.createElement("p");
+        year.textContent="Academic year: "+(schoolClass.academic_year || "Not specified");
+
+        const remove=document.createElement("button");
+        remove.className="red";
+        remove.textContent="Delete Class";
+        remove.addEventListener("click",()=>deleteClass(schoolClass.id,schoolClass.class_name));
+
+        card.append(title,stream,year,remove);
+        list.appendChild(card);
+    });
+}
+
+// Create class
+document.getElementById("addClassForm").addEventListener("submit",async function(e){
+    e.preventDefault();
+
+    if(!currentSchoolId){
+        showMessage("No school is selected.",true);
+        return;
+    }
+
+    const className=document.getElementById("className").value.trim();
+    const stream=document.getElementById("classStream").value.trim();
+    const year=Number(document.getElementById("academicYear").value);
+
+    if(!className || !Number.isInteger(year) || year<2000 || year>2100){
+        showMessage("Enter a valid class name and academic year.",true);
+        return;
+    }
+
+    showMessage("Creating class...");
+
+    const {error}=await client
+        .from("school_classes")
+        .insert({
+            school_id:currentSchoolId,
+            class_name:className,
+            stream:stream || null,
+            academic_year:year
+        });
+
+    if(error){
+        showMessage("Could not create class: "+error.message,true);
+        return;
+    }
+
+    document.getElementById("addClassForm").reset();
+    showMessage("Class created successfully.");
+    await loadClasses();
+});
+
+// Delete class
+async function deleteClass(classId,className){
+    if(!confirm("Delete "+className+"? This may be blocked if learners or exams are already connected to this class.")){
+        return;
+    }
+
+    showMessage("Deleting class...");
+
+    const {error}=await client
+        .from("school_classes")
+        .delete()
+        .eq("id",classId)
+        .eq("school_id",currentSchoolId);
+
+    if(error){
+        showMessage("The class could not be deleted. It may already have learners or exams connected to it. Details: "+error.message,true);
+        return;
+    }
+
+    showMessage("Class deleted successfully.");
+    await loadClasses();
+}
+
 // Refresh buttons
 document.getElementById("refreshSchools").addEventListener("click",loadSchools);
 document.getElementById("refreshTeachers").addEventListener("click",loadTeachers);
+document.getElementById("refreshClasses").addEventListener("click",loadClasses);
 
 async function logout(){
     const {error}=await client.auth.signOut();

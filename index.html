@@ -51,13 +51,20 @@ footer{text-align:center;padding:20px;color:#68758a;font-size:13px}
 <div id="message"></div>
 
 <section class="card" id="accountSection">
-<h2>Create School Account</h2>
+<h2>Create AYANET Account</h2>
+<p>Choose the type of account you need.</p>
 <form id="signupForm">
-<input id="signupName" placeholder="Headteacher / Account Holder Name" required>
+<label for="signupType">Account type</label>
+<select id="signupType" required style="width:100%;padding:13px;margin:8px 0;border:1px solid #cbd3df;border-radius:7px;font-size:15px">
+<option value="school_owner">School Owner / Headteacher</option>
+<option value="teacher">Teacher</option>
+</select>
+<input id="signupName" placeholder="Full Name" required>
 <input id="signupEmail" type="email" placeholder="Email Address" required>
 <input id="signupPassword" type="password" minlength="8" placeholder="Create Password (minimum 8 characters)" required>
 <button type="submit">Create Account</button>
 </form>
+<p class="small">Teachers: after creating your account and confirming your email, give the same email address to your school owner or headteacher so they can add you to the school.</p>
 </section>
 
 <section class="card" id="loginSection">
@@ -249,7 +256,7 @@ async function routeUser(){
             .maybeSingle();
 
         if(schoolError || !school){
-            showMessage("Your school is not currently available. It may be awaiting approval or suspended.",true);
+            showMessage("School lookup error: "+(schoolError ? schoolError.message : "No school record returned.")+" | School ID: "+managerMembership.school_id,true);
             return;
         }
 
@@ -276,7 +283,13 @@ async function routeUser(){
     }
 
     if(adminData!==true){
-        document.getElementById("schoolSection").style.display="block";
+        if(user.user_metadata && user.user_metadata.account_type==="teacher"){
+            document.getElementById("memberMessage").textContent=
+                "Your teacher account is registered. Please confirm your email if requested, then give your registered email address to your school owner or headteacher so they can add you to the school. You will not see school records until the school adds and activates your account.";
+            document.getElementById("memberSection").style.display="block";
+        }else{
+            document.getElementById("schoolSection").style.display="block";
+        }
     }
 }
 
@@ -300,13 +313,14 @@ document.getElementById("signupForm").addEventListener("submit",async function(e
     const name=document.getElementById("signupName").value.trim();
     const email=document.getElementById("signupEmail").value.trim();
     const password=document.getElementById("signupPassword").value;
+    const accountType=document.getElementById("signupType").value;
 
     showMessage("Creating your account...");
 
     const {data,error}=await client.auth.signUp({
         email,
         password,
-        options:{data:{account_holder_name:name}}
+        options:{data:{account_holder_name:name,account_type:accountType}}
     });
 
     if(error){
@@ -315,10 +329,18 @@ document.getElementById("signupForm").addEventListener("submit",async function(e
     }
 
     if(data.session){
-        showMessage("Account created successfully.");
+        if(accountType==="teacher"){
+            showMessage("Teacher account created. Please confirm your email if requested, then give your registered email address to your school owner or headteacher.");
+        }else{
+            showMessage("Account created successfully.");
+        }
         await routeUser();
     }else{
-        showMessage("Account created. Check your email for the confirmation link, then log in.");
+        if(accountType==="teacher"){
+            showMessage("Teacher account created. Check your email for the confirmation link. After confirming, log in and give your registered email address to your school owner or headteacher.");
+        }else{
+            showMessage("Account created. Check your email for the confirmation link, then log in.");
+        }
     }
 });
 

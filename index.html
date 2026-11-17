@@ -6,14 +6,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AYANET School Manager</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:Arial,sans-serif;background:#f1f4f9;color:#17243b}
 header{background:#10264b;color:white;padding:24px 15px;text-align:center}
 header h1{margin:0;font-size:28px}
 header p{color:#e7c66b;margin-bottom:0}
-.container{max-width:900px;margin:30px auto;padding:15px}
+.container{max-width:950px;margin:30px auto;padding:15px}
 .card{background:white;padding:24px;margin-bottom:20px;border-radius:12px;box-shadow:0 4px 18px #00000010}
 h2{color:#10264b;margin-top:0}
 input,button{width:100%;padding:13px;margin:8px 0;border-radius:7px;font-size:15px}
@@ -24,7 +23,7 @@ button:hover{background:#1b3d70}
 .gold:hover{background:#96701c}
 .grey{background:#777}
 .red{background:#a52b2b}
-#adminSection,#schoolSection{display:none}
+#adminSection,#schoolSection,#ownerSection,#memberSection{display:none}
 #message{display:none;padding:12px;border-radius:7px;margin-bottom:15px;overflow-wrap:anywhere}
 .school-card{border:1px solid #dce2eb;border-radius:9px;padding:16px;margin:14px 0}
 .school-card h3{margin:0 0 8px;color:#10264b}
@@ -35,11 +34,13 @@ button:hover{background:#1b3d70}
 .actions{display:flex;gap:8px;flex-wrap:wrap}
 .actions button{flex:1;min-width:120px}
 .small{font-size:13px;color:#68758a}
+.teacher-card{border:1px solid #dce2eb;border-radius:9px;padding:15px;margin:12px 0}
+.teacher-card p{overflow-wrap:anywhere}
 footer{text-align:center;padding:20px;color:#68758a;font-size:13px}
 </style>
 </head>
-
 <body>
+
 <header>
 <h1>AYANET</h1>
 <h2 style="color:white;margin:8px 0">SCHOOL MANAGER</h2>
@@ -79,6 +80,35 @@ footer{text-align:center;padding:20px;color:#68758a;font-size:13px}
 <button class="grey" id="schoolLogout">Logout</button>
 </section>
 
+<section id="memberSection" class="card">
+<h2>AYANET School Account</h2>
+<p id="memberMessage">Your school account is being checked.</p>
+<button class="grey" id="memberLogout">Logout</button>
+</section>
+
+<section id="ownerSection">
+<div class="card">
+<h2>School Owner Dashboard</h2>
+<h3 id="ownerSchoolName"></h3>
+<p id="ownerSchoolCounty" class="small"></p>
+<div class="divider"></div>
+
+<h2>Teacher Management</h2>
+<p>Add teachers who have already created their own AYANET accounts.</p>
+
+<form id="addTeacherForm">
+<label for="teacherEmail">Teacher's registered email address</label>
+<input id="teacherEmail" type="email" placeholder="teacher@example.com" required>
+<button class="gold" type="submit">Add Teacher</button>
+</form>
+
+<button id="refreshTeachers">Refresh Teacher List</button>
+<div id="teacherList">Loading teachers...</div>
+
+<button class="grey" id="ownerLogout">Logout</button>
+</div>
+</section>
+
 <section id="adminSection">
 <div class="card">
 <h2>AYANET Master Admin Dashboard</h2>
@@ -98,12 +128,12 @@ AYANET School Manager &copy; 2026
 <script>
 const SUPABASE_URL = "https://jltadhukraspfdaxbvwo.supabase.co";
 const SUPABASE_KEY = "sb_publishable_tItrrAg_q9xSCskecgc5Jg_bJkxsOiu";
-
 const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const messageBox = document.getElementById("message");
+let currentSchoolId = null;
 
-function showMessage(message, error=false){
+function showMessage(message,error=false){
     messageBox.style.display="block";
     messageBox.textContent=message;
     messageBox.style.background=error?"#fde8e8":"#e7f3e9";
@@ -111,13 +141,16 @@ function showMessage(message, error=false){
 }
 
 function hideSections(){
-    document.getElementById("accountSection").style.display="none";
-    document.getElementById("loginSection").style.display="none";
-    document.getElementById("schoolSection").style.display="none";
-    document.getElementById("adminSection").style.display="none";
+    [
+        "accountSection","loginSection","schoolSection",
+        "adminSection","ownerSection","memberSection"
+    ].forEach(id=>{
+        document.getElementById(id).style.display="none";
+    });
 }
 
 function showLoggedOut(){
+    currentSchoolId=null;
     hideSections();
     document.getElementById("accountSection").style.display="block";
     document.getElementById("loginSection").style.display="block";
@@ -125,9 +158,18 @@ function showLoggedOut(){
 
 async function routeUser(){
     hideSections();
+    currentSchoolId=null;
 
-    const {data:adminData,error:adminError} =
-        await client.rpc("is_ayanet_school_admin");
+    const {data:sessionData,error:sessionError}=await client.auth.getSession();
+
+    if(sessionError || !sessionData.session){
+        showLoggedOut();
+        return;
+    }
+
+    const user=sessionData.session.user;
+
+    const {data:adminData,error:adminError}=await client.rpc("is_ayanet_school_admin");
 
     if(adminError){
         showMessage("Could not verify account permissions: "+adminError.message,true);
@@ -135,22 +177,74 @@ async function routeUser(){
         return;
     }
 
-    if(adminData === true){
+    if(adminData===true){
         document.getElementById("adminSection").style.display="block";
         await loadSchools();
-    }else{
+    }
+
+    const {data:members,error:memberError}=await client
+        .from("school_members")
+        .select("id,school_id,role,active")
+        .eq("user_id",user.id)
+        .eq("active",true);
+
+    if(memberError){
+        showMessage("Could not check school membership: "+memberError.message,true);
+        if(adminData!==true) showLoggedOut();
+        return;
+    }
+
+    const managerMembership=(members||[]).find(m=>
+        m.active && ["owner","headteacher"].includes(m.role)
+    );
+
+    const teacherMembership=(members||[]).find(m=>
+        m.active && m.role==="teacher"
+    );
+
+    if(managerMembership){
+        const {data:school,error:schoolError}=await client
+            .from("schools")
+            .select("id,school_name,county,status")
+            .eq("id",managerMembership.school_id)
+            .maybeSingle();
+
+        if(schoolError || !school){
+            showMessage("Your school is not currently available. It may be awaiting approval or suspended.",true);
+            return;
+        }
+
+        if(school.status!=="approved"){
+            showMessage("Your school is not currently approved. Please contact AYANET administration.",true);
+            return;
+        }
+
+        currentSchoolId=school.id;
+        document.getElementById("ownerSchoolName").textContent=school.school_name;
+        document.getElementById("ownerSchoolCounty").textContent="County: "+school.county;
+        document.getElementById("ownerSection").style.display="block";
+        await loadTeachers();
+        return;
+    }
+
+    if(teacherMembership){
+        document.getElementById("memberMessage").textContent=
+            "Your teacher account is connected to a school. The teacher workspace will be added in a later upgrade.";
+        document.getElementById("memberSection").style.display="block";
+        return;
+    }
+
+    if(adminData!==true){
         document.getElementById("schoolSection").style.display="block";
     }
 }
 
 async function checkSession(){
     const {data,error}=await client.auth.getSession();
-
     if(error){
         showMessage(error.message,true);
         return;
     }
-
     if(data.session){
         await routeUser();
     }else{
@@ -158,7 +252,7 @@ async function checkSession(){
     }
 }
 
-// Create account
+// Account creation
 document.getElementById("signupForm").addEventListener("submit",async function(e){
     e.preventDefault();
 
@@ -230,7 +324,7 @@ document.getElementById("schoolForm").addEventListener("submit",async function(e
     showMessage("School registration submitted. It is awaiting AYANET approval. Reference: "+data);
 });
 
-// Load schools for Master Admin
+// Master Admin: load schools
 async function loadSchools(){
     const list=document.getElementById("schoolList");
     list.textContent="Loading schools...";
@@ -294,7 +388,6 @@ async function loadSchools(){
     });
 }
 
-// Approve or suspend a school
 async function reviewSchool(id,decision){
     const action=decision==="approved"?"approve":"suspend";
 
@@ -318,7 +411,120 @@ async function reviewSchool(id,decision){
     await loadSchools();
 }
 
+// Teacher management: load teachers
+async function loadTeachers(){
+    const list=document.getElementById("teacherList");
+
+    if(!currentSchoolId){
+        list.textContent="No school selected.";
+        return;
+    }
+
+    list.textContent="Loading teachers...";
+
+    const {data,error}=await client.rpc("get_school_teachers",{
+        p_school_id:currentSchoolId
+    });
+
+    if(error){
+        list.textContent="Could not load teachers: "+error.message;
+        return;
+    }
+
+    if(!data || data.length===0){
+        list.textContent="No teachers have been added yet.";
+        return;
+    }
+
+    list.replaceChildren();
+
+    data.forEach(teacher=>{
+        const card=document.createElement("div");
+        card.className="teacher-card";
+
+        const email=document.createElement("strong");
+        email.textContent=teacher.teacher_email;
+
+        const status=document.createElement("p");
+        status.textContent="Status: "+(teacher.active?"Active":"Inactive");
+
+        const date=document.createElement("p");
+        date.className="small";
+        date.textContent="Added: "+new Date(teacher.added_at).toLocaleString();
+
+        const button=document.createElement("button");
+        button.className=teacher.active?"red":"gold";
+        button.textContent=teacher.active?"Deactivate Teacher":"Activate Teacher";
+
+        button.addEventListener("click",()=>changeTeacherStatus(
+            teacher.member_id,!teacher.active
+        ));
+
+        card.append(email,status,date,button);
+        list.appendChild(card);
+    });
+}
+
+// Add teacher
+document.getElementById("addTeacherForm").addEventListener("submit",async function(e){
+    e.preventDefault();
+
+    if(!currentSchoolId){
+        showMessage("No school is selected.",true);
+        return;
+    }
+
+    const email=document.getElementById("teacherEmail").value.trim();
+
+    if(!confirm("Add "+email+" as a teacher to this school?")){
+        return;
+    }
+
+    showMessage("Adding teacher...");
+
+    const {error}=await client.rpc("add_school_teacher",{
+        p_school_id:currentSchoolId,
+        p_teacher_email:email
+    });
+
+    if(error){
+        showMessage(error.message,true);
+        return;
+    }
+
+    document.getElementById("addTeacherForm").reset();
+    showMessage("Teacher added successfully.");
+    await loadTeachers();
+});
+
+// Activate or deactivate teacher
+async function changeTeacherStatus(memberId,active){
+    const action=active?"activate":"deactivate";
+
+    if(!confirm("Are you sure you want to "+action+" this teacher?")){
+        return;
+    }
+
+    showMessage("Updating teacher status...");
+
+    const {error}=await client.rpc("set_school_teacher_status",{
+        p_school_id:currentSchoolId,
+        p_member_id:memberId,
+        p_active:active
+    });
+
+    if(error){
+        showMessage(error.message,true);
+        return;
+    }
+
+    showMessage("Teacher status updated successfully.");
+    await loadTeachers();
+}
+
+// Refresh buttons
 document.getElementById("refreshSchools").addEventListener("click",loadSchools);
+document.getElementById("refreshTeachers").addEventListener("click",loadTeachers);
 
 async function logout(){
     const {error}=await client.auth.signOut();
@@ -334,6 +540,8 @@ async function logout(){
 
 document.getElementById("schoolLogout").addEventListener("click",logout);
 document.getElementById("adminLogout").addEventListener("click",logout);
+document.getElementById("ownerLogout").addEventListener("click",logout);
+document.getElementById("memberLogout").addEventListener("click",logout);
 
 checkSession();
 </script>
